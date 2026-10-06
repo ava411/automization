@@ -435,6 +435,11 @@ def recommendations(s):
             recs.append((88, f"**{pct(timeouts)}** of your losses are on time and {pct(clk['time_trouble_loss_share'])} end with you "
                              "low on the clock. Budget time: play opening moves quickly, spend it on critical moments, and if you "
                              "keep flagging, switch to an increment time control (e.g. 10+5 or 15+10)."))
+    abandoned = dict(end["losses"]).get("abandoned", 0)
+    if end["n_losses"] >= 10 and abandoned / end["n_losses"] >= 0.08:
+        recs.append((84, f"**{abandoned}** of your losses ({pct(abandoned / end['n_losses'])}) are games you abandoned. "
+                         "Play every game to the end (or resign): you lose rating for free, and bad positions are where "
+                         "opponents at your level most often blunder back."))
     if clk["short_loss_share"] >= 0.3:
         recs.append((70, f"**{pct(clk['short_loss_share'])}** of your losses are over by move 25 — early disasters. Prioritise "
                          "opening principles (develop, castle, don't move a piece twice, don't grab pawns with the queen early)."))
@@ -466,11 +471,12 @@ def recommendations(s):
         bad = [r for r in s["openings"][color]["families"] if r[1] >= 8 and r[2] <= overall - 0.1]
         good = [r for r in s["openings"][color]["families"] if r[1] >= 8 and r[2] >= overall + 0.08]
         for name, n, sc in bad[:2]:
-            recs.append((68, f"As {color}, **{name}** is costing you: {pct(sc)} over {n} games (your average is {pct(overall)}). "
-                             "Either study its main plans with a short course/video or replace it with something simpler."))
+            recs.append((68, f"As {color}, you score only {pct(sc)} in **{name}** positions over {n} games (your average is "
+                             f"{pct(overall)}). Learn the typical plans and traps for your side of this opening, or pick a "
+                             "different reply that avoids it."))
         if good:
             name, n, sc = good[0]
-            recs.append((40, f"As {color}, **{name}** works well for you ({pct(sc)} in {n} games) — steer towards it."))
+            recs.append((40, f"As {color}, you do well in **{name}** positions ({pct(sc)} in {n} games)."))
 
     opp = {k: (n, sc) for k, n, sc in s["opponents"]}
     lower = [opp[k] for k in ("much lower (-150+)", "lower (-50..-150)") if k in opp]
@@ -581,12 +587,16 @@ def main():
     p.add_argument("--engine", help="path to the Stockfish binary")
     p.add_argument("--tz", default="UTC", help="your time zone for time-of-day stats, e.g. America/New_York")
     p.add_argument("--time-class", choices=["bullet", "blitz", "rapid", "daily"], help="only analyse this time class")
+    p.add_argument("--since", help="only analyse games on/after this date (YYYY-MM-DD)")
     p.add_argument("--data-dir", type=Path, default=Path("data"))
     p.add_argument("--out-dir", type=Path, default=Path("reports"))
     args = p.parse_args()
 
     tz = ZoneInfo(args.tz)
     games = load_games(args.username, args.data_dir)
+    if args.since:
+        cutoff = datetime.fromisoformat(args.since).replace(tzinfo=tz).timestamp()
+        games = [g for g in games if g["end_time"] >= cutoff]
     if args.time_class:
         games = [g for g in games if g["time_class"] == args.time_class]
     if not games:
