@@ -1,10 +1,12 @@
 """Analyze a downloaded chess.com game history and write an improvement report.
 
 Usage:
-    python -m chess_coach.analyze <username> [--engine-games N] [--depth D] [--tz Area/City]
+    python -m chess_coach.analyze <username> [<username> ...] [--engine-games N] [--depth D] [--tz Area/City]
 
 Reads data/<username>/games.json (created by chess_coach.fetch) and writes
-reports/<username>.md plus reports/<username>.json (raw stats).
+reports/<username>.md plus reports/<username>.json (raw stats). Pass several
+usernames to combine accounts that belong to the same player; the report is
+then named after them joined with "+".
 
 With --engine-games N (default 40) the N most recent games are run through
 Stockfish to find where blunders happen (opening/middlegame/endgame, time
@@ -38,7 +40,16 @@ MIN_GAMES = 5          # minimum sample before an opening/bucket is reported
 
 # ---------------------------------------------------------------- loading
 
-def load_games(username, data_dir):
+def load_games(usernames, data_dir):
+    """Load and merge the games of one or more accounts belonging to the same player."""
+    if isinstance(usernames, str):
+        usernames = [usernames]
+    games = [g for u in usernames for g in load_account(u, data_dir)]
+    games.sort(key=lambda x: x["end_time"])
+    return games
+
+
+def load_account(username, data_dir):
     path = data_dir / username.lower() / "games.json"
     if not path.exists():
         raise SystemExit(f"{path} not found - run `python -m chess_coach.fetch {username}` first")
@@ -56,6 +67,7 @@ def load_games(username, data_dir):
         else:
             score, how = 0.0, LOSS_REASONS.get(me["result"], me["result"])
         games.append({
+            "account": username.lower(),
             "url": g.get("url"),
             "pgn": g["pgn"],
             "end_time": g.get("end_time", 0),
@@ -581,7 +593,7 @@ def render(username, s):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("username")
+    p.add_argument("usernames", nargs="+", metavar="username")
     p.add_argument("--engine-games", type=int, default=40, help="recent games to run through Stockfish (0 = skip)")
     p.add_argument("--depth", type=int, default=12, help="Stockfish search depth")
     p.add_argument("--engine", help="path to the Stockfish binary")
@@ -593,7 +605,8 @@ def main():
     args = p.parse_args()
 
     tz = ZoneInfo(args.tz)
-    games = load_games(args.username, args.data_dir)
+    name = "+".join(u.lower() for u in args.usernames)
+    games = load_games(args.usernames, args.data_dir)
     if args.since:
         cutoff = datetime.fromisoformat(args.since).replace(tzinfo=tz).timestamp()
         games = [g for g in games if g["end_time"] >= cutoff]
@@ -609,13 +622,13 @@ def main():
          "opponents": opponent_stats(games),
          "behaviour": behaviour_stats(games, tz),
          "clock": length_and_clock_stats(games)}
-    cache = args.data_dir / args.username.lower() / "engine_cache.json"
+    cache = args.data_dir / "engine_cache.json"  # keyed by game URL, shared across accounts
     s["engine"] = engine_stats(games, args.engine_games, args.depth, args.engine, cache)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    md = args.out_dir / f"{args.username.lower()}.md"
-    md.write_text(render(args.username, s))
-    (args.out_dir / f"{args.username.lower()}.json").write_text(json.dumps(s, indent=1, default=str))
+    md = args.out_dir / f"{name}.md"
+    md.write_text(render(" + ".join(args.usernames), s))
+    (args.out_dir / f"{name}.json").write_text(json.dumps(s, indent=1, default=str))
     print(f"Report written to {md}")
 
 
